@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@keyframes scroll {
+    0% {
+      transform: translateX(0%);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+  
+  .animate-scroll {
+    animation: scroll 300s linear infinite;
+  }
+  
+  .animate-leave {
+  animation-duration: 0.15s !important; /* Adjust this value (e.g., 0.1s to 0.3s) */
+  animation-timing-function: ease-out !important;
+  opacity: 0 !important;
+  /* Optional: if you want them to slide up quickly on exit */
+  transform: translateY(-100%) !important;
+}
+
+/* Adjust enter animation if needed, e.g., to match speed or keep default */
+.animate-enter {
+  animation-duration: 0.3s !important; /* Default is often okay, adjust if it feels slow */
+}
+
+/* For better pointer events when multiple toasts stack, ensuring you can click the top one */
+/* This might already be handled by react-hot-toast's default setup, but as a fallback */
+.react-hot-toast {
+  pointer-events: auto !important;
+}
+
+@keyframes bounce-dot {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px); /* Adjust height of jump */
+  }
+}
+
+.loading-dot {
+  width: 10px; /* Size of the dot */
+  height: 10px; /* Size of the dot */
+  border-radius: 50%;
+  animation: bounce-dot 0.6s infinite ease-in-out; /* Animation properties */
+}
+
+/* Assign specific colors and delays for each dot based on the new gradient range */
+.loading-dot:nth-child(1) {
+  background-color: #286ffe; /* Start Blue */
+  animation-delay: 0s;
+}
+.loading-dot:nth-child(2) {
+  background-color: #3b5aec; /* Intermediate color 1 */
+  animation-delay: 0.1s;
+}
+.loading-dot:nth-child(3) {
+  background-color: #4c40fa; /* Intermediate color 2 */
+  animation-delay: 0.2s;
+}
+.loading-dot:nth-child(4) {
+  background-color: #5a23ef; /* End Purple */
+  animation-delay: 0.3s;
+}

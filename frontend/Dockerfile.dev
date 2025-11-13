@@ -1,0 +1,29 @@
+FROM node:20-alpine
+
+# Security: Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S reactuser -u 1001
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install --include=dev --legacy-peer-deps && \
+    npm cache clean --force
+
+# Copy application files
+COPY --chown=reactuser:nodejs . .
+
+# Clean and fix permissions for build directories
+RUN rm -rf .react-router node_modules/.vite && \
+    mkdir -p node_modules/.vite .react-router && \
+    chown -R reactuser:nodejs /app && \
+    chmod -R 777 node_modules/.vite .react-router
+
+# Use non-root user
+USER reactuser
+
+
+# Start development server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
