@@ -20,7 +20,7 @@ const SERVER_PORT = PORT || 8000;
  * @description Base URL for the backend API.
  * This is determined by NODE_ENV. In production, replace 'YOUR_PRODUCTION_API_URL' with your actual deployed API URL.
  */
-const BASE_URL = isProduction ? 'YOUR_PRODUCTION_API_URL' : `http://localhost:${SERVER_PORT}`;
+const BASE_URL = isProduction ? 'YOUR_PRODUCTION_API_URL' : `http://localhost`;
 
 /**
  * @constant {string} FRONTEND_URL

@@ -28,7 +28,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: frontend-app
     volumes:
-      - ./frontend:/app
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/package.json:/app/package.json
       - /app/node_modules
       - ./frontend/.env:/app/.env:ro
     environment:
@@ -38,6 +40,8 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    # Add user mapping to avoid permission issues
+    user: "1001:1001"
     security_opt:
       - no-new-privileges:true
 
