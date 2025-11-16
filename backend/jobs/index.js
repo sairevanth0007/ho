@@ -5,7 +5,10 @@
  */
 
 import cron from 'node-cron';
-import { checkExpiredSubscriptions } from './checkExpiredSubscriptions.js';
+import { 
+    checkExpiredSubscriptions, 
+    runAllCleanupTasks 
+} from './checkExpiredSubscriptions.js';
 
 /**
  * Initialize all scheduled jobs
@@ -13,25 +16,15 @@ import { checkExpiredSubscriptions } from './checkExpiredSubscriptions.js';
 export const initializeJobs = () => {
     console.log('[JOBS] Initializing scheduled jobs...');
 
-    // Run every day at 12:00 AM (midnight)
+    // ==================================================
+    // MAIN JOB: Comprehensive daily cleanup at midnight
+    // ==================================================
     cron.schedule('0 0 * * *', async () => {
-        console.log('[JOBS] Running daily subscription check...');
-        await checkExpiredSubscriptions();
+        console.log('[JOBS] Running comprehensive daily cleanup...');
+        await runAllCleanupTasks();
     });
-
-    // OPTIONAL: Run every hour (useful for testing or more frequent checks)
-    // cron.schedule('0 * * * *', async () => {
-    //     console.log('[JOBS] Running hourly subscription check...');
-    //     await checkExpiredSubscriptions();
-    // });
-
-    // For testing: Run every minute (REMOVE IN PRODUCTION)
-    // cron.schedule('* * * * *', async () => {
-    //     console.log('[JOBS] Running test subscription check...');
-    //     await checkExpiredSubscriptions();
-    // });
-
-    console.log('[JOBS] Scheduled jobs initialized successfully.');
+ console.log('[JOBS] ✅ Scheduled jobs initialized successfully.');
+    console.log('[JOBS] 📅 Daily cleanup scheduled for midnight (00:00)');
 };
 
 // /***

@@ -7,7 +7,7 @@
 import dotenv from 'dotenv';
 dotenv.config(); // Ensure environment variables are loaded
 
-const { NODE_ENV, PORT, CLIENT_URL } = process.env;
+const { NODE_ENV, PORT, CLIENT_URL, CORS_ORIGIN } = process.env;
 
 const isProduction = NODE_ENV === 'production';
 const isDevelopment = NODE_ENV === 'development';
@@ -20,7 +20,7 @@ const SERVER_PORT = PORT || 8000;
  * @description Base URL for the backend API.
  * This is determined by NODE_ENV. In production, replace 'YOUR_PRODUCTION_API_URL' with your actual deployed API URL.
  */
-const BASE_URL = isProduction ? 'YOUR_PRODUCTION_API_URL' : `http://localhost`;
+const BASE_URL = isProduction ? 'YOUR_PRODUCTION_API_URL' : CORS_ORIGIN;
 
 /**
  * @constant {string} FRONTEND_URL

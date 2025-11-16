@@ -36,8 +36,6 @@ function addDays(date, days) {
  * @function createTeamCheckoutSession
  * @route POST /api/v1/team/create-checkout
  * @description Creates a Stripe Checkout Session for Small Business team subscription
- * @body {string} planId - The MongoDB _id of the Small Business plan
- * @body {number} seats - Number of seats to purchase (1-20)
  */
 const createTeamCheckoutSession = asyncHandler(async (req, res) => {
   const { planId, seats } = req.body;
@@ -56,7 +54,26 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
 
   // Check if user already owns a team
   if (req.user.isTeamOwner && req.user.ownedTeamSubscription) {
-    throw new ApiError(HttpStatusCode.BAD_REQUEST, 'You already own a team subscription.');
+    const existingTeamSub = await TeamSubscription.findById(req.user.ownedTeamSubscription);
+    if (existingTeamSub && existingTeamSub.subscriptionStatus === 'active' && 
+        existingTeamSub.currentPeriodEnd > new Date()) {
+      throw new ApiError(HttpStatusCode.BAD_REQUEST, 'You already own an active team subscription.');
+    }
+  }
+
+  // VALIDATION: Prevent team member from purchasing team plan
+  if (req.user.isTeamMember && req.user.teamMembership) {
+    const teamMember = await TeamMember.findById(req.user.teamMembership)
+      .populate('teamSubscriptionId');
+    
+    if (teamMember && teamMember.status === 'active' && 
+        teamMember.teamSubscriptionId.subscriptionStatus === 'active' &&
+        teamMember.teamSubscriptionId.currentPeriodEnd > new Date()) {
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        'You cannot purchase a team plan while being an active team member. Please leave the team first.'
+      );
+    }
   }
 
   // Verify plan
@@ -76,10 +93,7 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
     stripeCustomerId = customer.id;
   }
 
-  // Fix URL configuration - use consistent bridge.FRONTEND_URL
   const frontendUrl = bridge.FRONTEND_URL;
-  
-  // Ensure the URL has proper scheme
   let processedFrontendUrl = frontendUrl;
   if (!frontendUrl.startsWith('http://') && !frontendUrl.startsWith('https://')) {
     processedFrontendUrl = `https://${frontendUrl}`;
@@ -88,15 +102,14 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
   const successUrl = `${processedFrontendUrl}/dashboard?payment=success&session_id={CHECKOUT_SESSION_ID}`;
   const cancelUrl = `${processedFrontendUrl}/dashboard?payment=canceled`;
 
-  // Calculate the total amount for display purposes
-  const totalAmount = plan.price * seats; // price is in cents
+  const totalAmount = plan.price * seats;
 
   try {
     const session = await stripe.checkout.sessions.create({
       customer: stripeCustomerId,
       line_items: [{
         price: plan.stripePriceId,
-        quantity: seats, // This is what multiplies the base price
+        quantity: seats,
       }],
       mode: 'subscription',
       success_url: successUrl,
@@ -117,7 +130,6 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
       allow_promotion_codes: true,
     });
 
-    // Update user's Stripe customer ID if new
     if (!req.user.stripeCustomerId) {
       req.user.stripeCustomerId = stripeCustomerId;
       await req.user.save({ validateBeforeSave: false });
@@ -137,7 +149,6 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error("Error creating team checkout session:", error);
     
-    // Handle specific Stripe errors
     if (error.type === 'StripeCardError') {
       throw new ApiError(HttpStatusCode.BAD_REQUEST, `Payment error: ${error.message}`);
     } else if (error.type === 'StripeInvalidRequestError') {
@@ -156,7 +167,6 @@ const createTeamCheckoutSession = asyncHandler(async (req, res) => {
  * @function addTeamMember
  * @route POST /api/v1/team/members/add
  * @description Add a team member to the team subscription
- * @body {string} memberEmail - Email of the user to add
  */
 const addTeamMember = asyncHandler(async (req, res) => {
   const { memberEmail } = req.body;
@@ -176,11 +186,11 @@ const addTeamMember = asyncHandler(async (req, res) => {
     throw new ApiError(HttpStatusCode.BAD_REQUEST, 'Your team subscription is not active.');
   }
 
-  // Check available seats (owner already occupies 1 seat)
+  // Check available seats
   if (teamSub.usedSeats >= teamSub.totalSeats) {
     throw new ApiError(
       HttpStatusCode.BAD_REQUEST,
-      `No available seats. You have ${teamSub.totalSeats} total seats (including yourself) and all are occupied. Currently used: ${teamSub.usedSeats}/${teamSub.totalSeats}.`
+      `No available seats. You have ${teamSub.totalSeats} total seats and all are occupied. Currently used: ${teamSub.usedSeats}/${teamSub.totalSeats}.`
     );
   }
 
@@ -195,7 +205,7 @@ const addTeamMember = asyncHandler(async (req, res) => {
     throw new ApiError(HttpStatusCode.BAD_REQUEST, 'You cannot add yourself as a team member.');
   }
 
-  // Check if already a member
+  // Check if already a member of this team
   const existingMembership = await TeamMember.findOne({
     teamSubscriptionId: teamSub._id,
     userId: memberUser._id,
@@ -206,6 +216,33 @@ const addTeamMember = asyncHandler(async (req, res) => {
     throw new ApiError(HttpStatusCode.BAD_REQUEST, 'User is already a member of your team.');
   }
 
+  // Check if user is member of another team
+  if (memberUser.isTeamMember && memberUser.teamMembership) {
+    const currentMembership = await TeamMember.findById(memberUser.teamMembership)
+      .populate('teamSubscriptionId');
+    
+    if (currentMembership && currentMembership.status === 'active' &&
+        currentMembership.teamSubscriptionId.subscriptionStatus === 'active' &&
+        currentMembership.teamSubscriptionId.currentPeriodEnd > new Date()) {
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        'User is already an active member of another team. They must leave that team first.'
+      );
+    }
+  }
+
+  // Check if user owns another team
+  if (memberUser.isTeamOwner && memberUser.ownedTeamSubscription) {
+    const ownedTeam = await TeamSubscription.findById(memberUser.ownedTeamSubscription);
+    if (ownedTeam && ownedTeam.subscriptionStatus === 'active' && 
+        ownedTeam.currentPeriodEnd > new Date()) {
+      throw new ApiError(
+        HttpStatusCode.BAD_REQUEST,
+        'User owns an active team subscription. Team owners cannot be added as team members.'
+      );
+    }
+  }
+
   // Start transaction
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -214,16 +251,16 @@ const addTeamMember = asyncHandler(async (req, res) => {
     let transitionDetails = {};
     let extendedExpiryDate = null;
 
-    // Handle personal subscription transition
+    // CRITICAL FIX: Handle personal subscription transition with remaining days
     if (memberUser.subscriptionStatus === 'active' && memberUser.stripeSubscriptionId) {
       const now = new Date();
       const personalExpiry = memberUser.subscriptionExpiresAt;
 
       if (personalExpiry > now) {
-        // Calculate remaining days
+        // Calculate remaining days from personal subscription
         const remainingDays = calculateDaysBetween(now, personalExpiry);
 
-        // Add remaining days to team subscription end
+        // Add remaining days to team subscription end date
         extendedExpiryDate = addDays(teamSub.currentPeriodEnd, remainingDays);
 
         transitionDetails = {
@@ -233,27 +270,22 @@ const addTeamMember = asyncHandler(async (req, res) => {
           personalPlanCanceledAt: now,
         };
 
-        // Cancel personal Stripe subscription (cancel at period end = false, immediate cancel)
+        // Cancel personal Stripe subscription immediately
         try {
           await stripe.subscriptions.update(memberUser.stripeSubscriptionId, {
-            cancel_at_period_end: false, // Immediate cancellation
+            cancel_at_period_end: false,
           });
           await stripe.subscriptions.cancel(memberUser.stripeSubscriptionId);
-          console.log(`Canceled personal subscription ${memberUser.stripeSubscriptionId} for user ${memberUser.email}`);
+          console.log(`Canceled personal subscription ${memberUser.stripeSubscriptionId} for user ${memberUser.email}. ${remainingDays} days added to team access.`);
         } catch (stripeError) {
           console.error('Error canceling personal subscription:', stripeError);
-          // Continue anyway - webhook will handle this
+          // Continue - webhook will handle
         }
-
-        // Update member user
-        memberUser.stripeSubscriptionId = null;
-        memberUser.subscriptionStatus = 'canceled';
-        memberUser.currentPlanId = null;
-        memberUser.currentPlanType = null;
-        memberUser.personalPlanCanceledForTeam = true;
-        memberUser.extendedExpiryFromPersonalPlan = extendedExpiryDate;
       }
     }
+
+    // CRITICAL FIX: Clear free trial status when joining team
+    const wasOnFreeTrial = memberUser.subscriptionStatus === PlanTypes.FREE_TRIAL;
 
     // Create team member record
     const teamMember = new TeamMember({
@@ -266,9 +298,25 @@ const addTeamMember = asyncHandler(async (req, res) => {
     });
     await teamMember.save({ session });
 
-    // Update member user
+    // CRITICAL FIX: Update member user with proper field clearing
     memberUser.isTeamMember = true;
     memberUser.teamMembership = teamMember._id;
+    
+    // Clear personal subscription fields
+    memberUser.stripeSubscriptionId = null;
+    memberUser.subscriptionStatus = 'active'; // Active through team
+    memberUser.currentPlanId = null;
+    memberUser.currentPlanType = null;
+    memberUser.personalPlanCanceledForTeam = true;
+    memberUser.extendedExpiryFromPersonalPlan = extendedExpiryDate;
+    
+    // Clear free trial if applicable
+    if (wasOnFreeTrial || memberUser.isFreeTrialEligible) {
+      memberUser.hasUsedFreeTrial = true;
+      memberUser.isFreeTrialEligible = false;
+      memberUser.subscriptionExpiresAt = null; // Clear free trial expiry
+    }
+
     await memberUser.save({ session, validateBeforeSave: false });
 
     // Update team subscription used seats
@@ -285,11 +333,14 @@ const addTeamMember = asyncHandler(async (req, res) => {
           email: teamMember.memberEmail,
           addedAt: teamMember.addedAt,
           extendedExpiry: extendedExpiryDate,
+          daysFromPersonalPlan: transitionDetails.daysAddedToTeamEnd || 0,
         },
         usedSeats: teamSub.usedSeats,
         totalSeats: teamSub.totalSeats,
       },
-      'Team member added successfully.'
+      extendedExpiryDate 
+        ? `Team member added successfully. ${transitionDetails.daysAddedToTeamEnd} days from their personal plan added to their team access.`
+        : 'Team member added successfully.'
     ));
   } catch (error) {
     await session.abortTransaction();
@@ -307,8 +358,7 @@ const addTeamMember = asyncHandler(async (req, res) => {
  * @async
  * @function removeTeamMember
  * @route POST /api/v1/team/members/remove
- * @description Remove a team member (access remains until period end)
- * @body {string} memberId - TeamMember document ID to remove
+ * @description Remove a team member (access remains until period end or extended expiry)
  */
 const removeTeamMember = asyncHandler(async (req, res) => {
   const { memberId } = req.body;
@@ -343,14 +393,20 @@ const removeTeamMember = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
-    // Mark as removed but access remains until period end
+    const memberUser = await User.findById(teamMember.userId);
+    
+    // Determine access expiry - use extended expiry if exists, otherwise team period end
+    const accessExpiry = memberUser.extendedExpiryFromPersonalPlan || teamSub.currentPeriodEnd;
+
+    // Mark as pending removal
     teamMember.status = 'pending_removal';
     teamMember.removedAt = new Date();
-    teamMember.accessExpiresAt = teamSub.currentPeriodEnd;
+    teamMember.accessExpiresAt = accessExpiry;
     await teamMember.save({ session });
 
-    // Note: usedSeats will be decremented at next renewal or when access actually expires
-    // For now, keep the seat "used" since member still has access
+    // Note: Don't decrement usedSeats yet - member still has access
+    // usedSeats will be decremented when status changes to 'removed' at next renewal
+
     await session.commitTransaction();
 
     return res.status(HttpStatusCode.OK).json(new ApiResponse(
@@ -359,8 +415,9 @@ const removeTeamMember = asyncHandler(async (req, res) => {
         memberId: teamMember._id,
         memberEmail: teamMember.memberEmail,
         accessExpiresAt: teamMember.accessExpiresAt,
+        extendedAccess: !!memberUser.extendedExpiryFromPersonalPlan,
       },
-      'Team member removed. Access remains until end of current billing period.'
+      `Team member removed. Access remains until ${teamMember.accessExpiresAt.toLocaleDateString()}.`
     ));
   } catch (error) {
     await session.abortTransaction();
@@ -388,19 +445,26 @@ const getTeamMembers = asyncHandler(async (req, res) => {
   const members = await TeamMember.find({
     teamSubscriptionId: req.user.ownedTeamSubscription,
   })
-  .populate('userId', 'name email avatar')
+  .populate('userId', 'name email avatar extendedExpiryFromPersonalPlan')
   .sort({ addedAt: -1 });
 
   const teamSub = await TeamSubscription.findById(req.user.ownedTeamSubscription);
 
+  // Enhance member data with extended access info
+  const enhancedMembers = members.map(member => ({
+    ...member.toObject(),
+    hasExtendedAccess: !!member.userId?.extendedExpiryFromPersonalPlan,
+    effectiveAccessExpiry: member.userId?.extendedExpiryFromPersonalPlan || teamSub.currentPeriodEnd,
+  }));
+
   return res.status(HttpStatusCode.OK).json(new ApiResponse(
     HttpStatusCode.OK,
     {
-      members,
+      members: enhancedMembers,
       usedSeats: teamSub.usedSeats,
       totalSeats: teamSub.totalSeats,
       availableSeats: teamSub.totalSeats - teamSub.usedSeats,
-      note: 'You (owner) occupy 1 seat. Used seats includes you + team members.'
+      note: 'You (owner) occupy 1 seat. Used seats includes you + active team members.'
     },
     'Team members fetched successfully.'
   ));
@@ -411,7 +475,6 @@ const getTeamMembers = asyncHandler(async (req, res) => {
  * @function transferOwnership
  * @route POST /api/v1/team/transfer-ownership
  * @description Transfer team ownership to another team member
- * @body {string} newOwnerEmail - Email of the new owner (must be existing team member)
  */
 const transferOwnership = asyncHandler(async (req, res) => {
   const { newOwnerEmail } = req.body;
@@ -456,11 +519,6 @@ const transferOwnership = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
-    // Update Stripe subscription customer
-    await stripe.subscriptions.update(teamSub.stripeSubscriptionId, {
-      cancel_at_period_end: true, // Cancel auto-renewal for old owner
-    });
-
     // Create new Stripe customer for new owner if needed
     let newOwnerStripeCustomerId = newOwner.stripeCustomerId;
     if (!newOwnerStripeCustomerId) {
@@ -473,10 +531,10 @@ const transferOwnership = asyncHandler(async (req, res) => {
       newOwner.stripeCustomerId = newOwnerStripeCustomerId;
     }
 
-    // Transfer subscription to new customer
+    // Transfer subscription to new customer in Stripe
     await stripe.subscriptions.update(teamSub.stripeSubscriptionId, {
       customer: newOwnerStripeCustomerId,
-      cancel_at_period_end: false, // Re-enable auto-renewal for new owner
+      cancel_at_period_end: false,
     });
 
     // Update team subscription
@@ -497,14 +555,22 @@ const transferOwnership = asyncHandler(async (req, res) => {
     req.user.ownedTeamSubscription = null;
     req.user.isTeamMember = true;
     req.user.teamMembership = oldOwnerAsMember._id;
+    req.user.currentPlanId = null;
+    req.user.currentPlanType = null;
     await req.user.save({ session, validateBeforeSave: false });
 
     // Update new owner - remove from members, make owner
     await TeamMember.findByIdAndDelete(newOwnerMembership._id, { session });
+    
     newOwner.isTeamMember = false;
     newOwner.teamMembership = null;
     newOwner.isTeamOwner = true;
     newOwner.ownedTeamSubscription = teamSub._id;
+    newOwner.currentPlanId = teamSub.planId;
+    newOwner.currentPlanType = PlanTypes.SMALL_BUSINESS;
+    newOwner.subscriptionStatus = 'active';
+    newOwner.subscriptionExpiresAt = teamSub.currentPeriodEnd;
+    newOwner.extendedExpiryFromPersonalPlan = null; // Clear extended expiry
     await newOwner.save({ session, validateBeforeSave: false });
 
     await session.commitTransaction();
